@@ -1,66 +1,80 @@
-// server.js
+// server.js  (improved, debug friendly)
 import express from "express";
 import fetch from "node-fetch";
 import cors from "cors";
 
 const app = express();
-
-// ✅ Allow requests from all origins (important for GitHub frontend)
 app.use(cors());
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.send("✅ YouTube Tag Proxy is Running Successfully!");
-});
+app.get("/", (req, res) => res.send("✅ YouTube Tag Proxy is Running Successfully!"));
 
-// 🎯 Main endpoint: /extract?v=VIDEO_ID
+function safeJSONParse(s) {
+  try { return JSON.parse(s); } catch(e){ return null; }
+}
+
+async function fetchWithTimeout(url, options = {}, timeout = 15000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const resp = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return resp;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+}
+
 app.get("/extract", async (req, res) => {
   const videoId = req.query.v;
-  if (!videoId) return res.status(400).json({ error: "Missing video ID" });
+  if (!videoId) return res.status(400).json({ ok:false, error: "Missing video ID" });
 
   try {
-    // Fetch YouTube HTML
-    const ytRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
-    const html = await ytRes.text();
+    const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    // Use a standard UA to avoid bot blocks
+    const resp = await fetchWithTimeout(ytUrl, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" } }, 15000);
 
-    // Extract tags from <meta name="keywords">
-    const metaMatch = html.match(/<meta name="keywords" content="([^"]+)">/i);
-    let tags = [];
-    if (metaMatch) {
-      tags = metaMatch[1].split(",").map(t => t.trim());
+    if (!resp.ok) {
+      const status = resp.status;
+      const text = await resp.text().catch(()=>"");
+      console.error("YouTube fetch failed:", status);
+      return res.status(502).json({ ok:false, error: "Failed to fetch YouTube page", status, bodySample: text.slice(0,1000) });
     }
 
-    // Backup: from ytInitialPlayerResponse JSON
+    const html = await resp.text();
+
+    // 1) meta keywords
+    const metaMatch = html.match(/<meta name=["']keywords["'] content=["']([^"']+)["']/i);
+    let tags = [];
+    if (metaMatch) {
+      tags = metaMatch[1].split(",").map(t => t.trim()).filter(Boolean);
+    }
+
+    // 2) ytInitialPlayerResponse JSON
     if (!tags.length) {
       const jsonMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\})\s*;/s);
       if (jsonMatch) {
-        const obj = JSON.parse(jsonMatch[1]);
-        if (obj.videoDetails && obj.videoDetails.keywords) {
-          tags = obj.videoDetails.keywords;
-        }
+        const parsed = safeJSONParse(jsonMatch[1]);
+        if (parsed?.videoDetails?.keywords) tags = parsed.videoDetails.keywords;
       }
     }
 
-    // Fallback: generate keywords from description
+    // 3) og:description fallback
     if (!tags.length) {
-      const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/i);
+      const descMatch = html.match(/<meta property=["']og:description["'] content=["']([^"']+)["']/i);
       if (descMatch) {
-        const words = descMatch[1]
-          .split(/[^A-Za-z0-9]+/)
-          .map(w => w.trim())
-          .filter(Boolean);
-        tags = Array.from(new Set(words)).slice(0, 25);
+        const words = descMatch[1].split(/[^A-Za-z0-9#]+/).map(w => w.trim()).filter(Boolean);
+        tags = Array.from(new Set(words)).slice(0, 30);
       }
     }
 
-    if (!tags.length) {
-      return res.json({ message: "No tags found for this video", tags: [] });
-    }
-
-    return res.json({ videoId, tags });
+    // Final response
+    return res.json({ ok:true, videoId, tags, count: tags.length });
   } catch (err) {
-    console.error("Error extracting tags:", err);
-    return res.status(500).json({ error: "Failed to extract tags" });
+    console.error("Exception in /extract:", err && err.message ? err.message : err);
+    // Return helpful error info (not stack) so frontend can display it
+    return res.status(500).json({ ok:false, error: "Server error", message: String(err && err.message ? err.message : err) });
   }
 });
 
