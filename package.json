@@ -1,9 +1,7 @@
 {
   "name": "youtube-tag-proxy",
   "version": "1.0.0",
-  "description": "A proxy server to extract YouTube tags safely for Multiimagex YouTube Tag Extractor",
   "main": "server.js",
-  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
