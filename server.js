@@ -19,7 +19,7 @@ app.get("/extract", async (req, res) => {
     return res.status(400).json({ error: "Missing video ID" });
   }
 
-  const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${vid}&key=${API_KEY}`;
+  const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${API_KEY}`;
 
   try {
     const response = await fetch(apiUrl);
