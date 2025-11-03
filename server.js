@@ -4,25 +4,33 @@ import fetch from "node-fetch";
 import cors from "cors";
 
 const app = express();
-app.use(cors()); // ✅ Allow all origins (for GitHub frontend)
 
+// ✅ Allow requests from all origins (important for GitHub frontend)
+app.use(cors());
+app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.send("✅ YouTube Tag Proxy is Running Successfully!");
+});
+
+// 🎯 Main endpoint: /extract?v=VIDEO_ID
 app.get("/extract", async (req, res) => {
   const videoId = req.query.v;
   if (!videoId) return res.status(400).json({ error: "Missing video ID" });
 
   try {
-    // Fetch HTML from YouTube
+    // Fetch YouTube HTML
     const ytRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
     const html = await ytRes.text();
 
-    // Extract <meta name="keywords">
+    // Extract tags from <meta name="keywords">
     const metaMatch = html.match(/<meta name="keywords" content="([^"]+)">/i);
     let tags = [];
     if (metaMatch) {
-      tags = metaMatch[1].split(",").map((t) => t.trim());
+      tags = metaMatch[1].split(",").map(t => t.trim());
     }
 
-    // Backup: from JSON data
+    // Backup: from ytInitialPlayerResponse JSON
     if (!tags.length) {
       const jsonMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\})\s*;/s);
       if (jsonMatch) {
@@ -33,18 +41,15 @@ app.get("/extract", async (req, res) => {
       }
     }
 
-    // Fallback: og:description keywords
+    // Fallback: generate keywords from description
     if (!tags.length) {
       const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/i);
       if (descMatch) {
-        tags = Array.from(
-          new Set(
-            descMatch[1]
-              .split(/[^A-Za-z0-9]+/)
-              .map((w) => w.trim())
-              .filter(Boolean)
-          )
-        ).slice(0, 25);
+        const words = descMatch[1]
+          .split(/[^A-Za-z0-9]+/)
+          .map(w => w.trim())
+          .filter(Boolean);
+        tags = Array.from(new Set(words)).slice(0, 25);
       }
     }
 
@@ -54,14 +59,10 @@ app.get("/extract", async (req, res) => {
 
     return res.json({ videoId, tags });
   } catch (err) {
-    console.error(err);
+    console.error("Error extracting tags:", err);
     return res.status(500).json({ error: "Failed to extract tags" });
   }
 });
 
-app.get("/", (req, res) => {
-  res.send("✅ YouTube Tag Proxy is Running!");
-});
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
