@@ -3,42 +3,59 @@ import cors from "cors";
 import fetch from "node-fetch";
 
 const app = express();
-app.use(cors());
 
+// ✅ Enable CORS globally
+app.use(cors({ origin: "*", methods: ["GET"] }));
+
+// ✅ Default route to check if API is running
 app.get("/", (req, res) => {
-  res.send("✅ YouTube Tag Proxy is Running Successfully!");
+  res.send("✅ YouTube Tag Proxy is running successfully on Vercel!");
 });
 
+// ✅ Main route for extracting tags
 app.get("/extract", async (req, res) => {
-  const videoId = req.query.v;
-  if (!videoId) return res.status(400).json({ ok: false, error: "Missing video ID" });
-
-  const url = `https://www.youtube.com/watch?v=${videoId}`;
-
   try {
-    const response = await fetch(url, {
+    const videoId = req.query.v;
+    if (!videoId) {
+      return res.status(400).json({ ok: false, error: "Missing video ID" });
+    }
+
+    const youtubeURL = `https://www.youtube.com/watch?v=${videoId}`;
+    const response = await fetch(youtubeURL, {
       headers: { "User-Agent": "Mozilla/5.0" },
     });
+
+    if (!response.ok) {
+      return res.status(500).json({ ok: false, error: "Failed to fetch YouTube page" });
+    }
+
     const html = await response.text();
 
+    // 🔍 Extract tags from <meta name="keywords">
     const metaMatch = html.match(/<meta name="keywords" content="([^"]+)">/i);
     if (metaMatch) {
       const tags = metaMatch[1].split(",").map((t) => t.trim());
       return res.json({ ok: true, tags });
     }
 
+    // 🔍 Extract tags from ytInitialPlayerResponse JSON
     const jsonMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\});/s);
     if (jsonMatch) {
-      const data = JSON.parse(jsonMatch[1]);
-      const tags = data.videoDetails?.keywords || [];
-      return res.json({ ok: true, tags });
+      try {
+        const data = JSON.parse(jsonMatch[1]);
+        const tags = data.videoDetails?.keywords || [];
+        return res.json({ ok: true, tags });
+      } catch (err) {
+        console.error("JSON parse error:", err);
+      }
     }
 
-    return res.json({ ok: false, error: "No tags found" });
+    res.json({ ok: false, error: "No tags found" });
   } catch (err) {
-    console.error("Error fetching:", err);
-    res.status(500).json({ ok: false, error: "Server error" });
+    console.error("Server error:", err);
+    res.status(500).json({ ok: false, error: "Internal Server Error" });
   }
 });
 
-app.listen(3000, () => console.log("Server running on port 3000"));
+// ✅ Required for Vercel serverless
+export default app;
